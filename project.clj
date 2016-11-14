@@ -17,6 +17,13 @@
   ; set to true to have verbose debug of integration tests
   :jvm-opts ["-Ddebug=false"]
 
+  :repositories [["releases" {:url "http://nexus.cxengagelabs.net/content/repositories/releases/"
+                              :snapshots false}]
+                 ["snapshots" {:url "http://nexus.cxengagelabs.net/content/repositories/snapshots/"
+                               :update :always}]
+                 ["thirdparty" {:url "http://nexus.cxengagelabs.net/content/repositories/thirdparty/"
+                                :update :always}]]
+
   :eastwood {:exclude-linters [:constant-test]}
 
   :dependencies [[org.clojure/clojure "1.8.0"]
