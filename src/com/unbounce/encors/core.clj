@@ -114,13 +114,13 @@
 (defn apply-ring-headers [response headers]
   (update-in response [:headers] merge headers))
 
-(defn apply-cors-policy [{:keys [req app origin cors-policy apply-headers]}]
+(defn apply-cors-policy [{:keys [req app origin cors-policy apply-headers]} respond]
   (let [allowed-origins (:allowed-origins cors-policy)
         common-headers (cors-common-headers origin cors-policy)
         fail-or-ignore (fn fail [err-msg]
                          (if (:ignore-failures? cors-policy)
                            (app req)
-                           (cors-failure err-msg)))]
+                           (respond (cors-failure err-msg))))]
 
     (cond
       ;;
@@ -135,9 +135,9 @@
           (match e-preflight-headers
                  [:left err-msg] (fail-or-ignore err-msg)
                  [:right preflight-headers]
-                 {:status 204
-                  :headers (merge common-headers preflight-headers)
-                  :body ""}))
+                 (respond {:status  204
+                           :headers (merge common-headers preflight-headers)
+                           :body    ""})))
         ;; else
         (let [control-expose-headers
               (if-let [exposed-headers (:exposed-headers cors-policy)]
@@ -146,23 +146,22 @@
 
               all-headers
               (merge common-headers control-expose-headers)]
-          (apply-headers (app req) all-headers)))
+          (app req #(apply-headers % all-headers))))
 
       ;;
       :else
       (fail-or-ignore (str "Unsupported origin: " (pr-str origin))))))
 
-(defn build-cors-wrapper
-  [app cors-policy apply-headers]
-  (s/validate types/CorsPolicySchema cors-policy)
-  (fn wrap-cors-handler [req]
+(defn build-apply-cors
+  [cors-policy apply-headers]
+  (fn [app req respond]
     (let [origin (get (:headers req) "origin")]
 
       (cond
         ;; halt & fail
         (and (nil? origin)
              (:require-origin? cors-policy))
-        (cors-failure "Origin header is missing")
+        (respond (cors-failure "Origin header is missing"))
 
         ;; continue with inner app
         (nil? origin)
@@ -173,7 +172,26 @@
                             :app app
                             :apply-headers apply-headers
                             :origin origin
-                            :cors-policy cors-policy})))))
+                            :cors-policy cors-policy}
+                           respond)))))
+
+(defn build-cors-wrapper
+  [handler cors-policy apply-headers]
+  (s/validate types/CorsPolicySchema cors-policy)
+  (let [apply-cors (build-apply-cors cors-policy apply-headers)]
+    (fn wrap-cors-handler
+      ([req]
+       (letfn [(app ([cors-req] (app cors-req identity))
+                    ([cors-req response-fn] (-> (handler cors-req) response-fn)))]
+         (apply-cors app req identity)))
+
+      ([req respond raise]
+       (letfn [(app ([cors-req] (app cors-req identity))
+                    ([cors-req response-fn] (handler cors-req #(respond (response-fn %)) raise)))]
+         (try
+           (apply-cors app req respond)
+           (catch Exception e
+             (raise e))))))))
 
 (defn wrap-cors
   "CORS Middleware for standard ring applications.
